@@ -141,6 +141,18 @@ p{text-wrap:pretty}
 .time{min-height:44px;border:1px solid var(--line);border-radius:10px;background:var(--ink-2);font-size:15px;font-variant-numeric:tabular-nums}
 .time:disabled{opacity:.32;text-decoration:line-through}
 .time[aria-pressed="true"]{background:var(--gold);border-color:var(--gold);color:var(--gold-ink);font-weight:700}
+.time.cont[aria-pressed="true"]{background:var(--ink-3);border-color:var(--gold);color:var(--gold);font-weight:500}
+
+.durs{display:flex;flex-wrap:wrap;gap:8px}
+.dur{display:flex;flex-direction:column;align-items:flex-start;gap:0;min-width:96px;min-height:52px;padding:8px 14px;border:1px solid var(--line);border-radius:10px;background:var(--ink-2);text-align:left}
+.dur b{font-size:15px;font-variant-numeric:tabular-nums}
+.dur span{font-size:13px;color:var(--gold);font-variant-numeric:tabular-nums}
+.dur[aria-pressed="true"]{background:var(--gold);border-color:var(--gold);color:var(--gold-ink)}
+.dur[aria-pressed="true"] span{color:var(--gold-ink)}
+
+.opts{display:flex;flex-direction:column;gap:10px}
+.opt-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;gap:10px;align-items:end}
+.opt-row .btn{min-height:44px}
 
 .sel-sum{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:4px 12px;margin:0;padding:12px 14px;border:1px solid var(--gold);border-radius:10px;background:var(--ink-3)}
 .sel-sum strong{font-variant-numeric:tabular-nums}
@@ -353,13 +365,14 @@ function setPath(o,path,v){var ks=path.split('.');for(var i=0;i<ks.length-1;i++)
 function reduceMotion(){try{return window.matchMedia('(prefers-reduced-motion: reduce)').matches;}catch(e){return false;}}
 function apiReady(){return /^https:\/\/script\.google(usercontent)?\.com\//.test(API_URL);}
 function post(payload){return fetch(API_URL,{method:'POST',body:JSON.stringify(payload)}).then(function(r){return r.json();});}
-function minS(s){return Math.max(1,Number(s.minSlots)||1);}
-function maxS(s){return Math.max(minS(s),Number(s.maxSlots)||1);}
-function priceOf(s,n){return (Number(s.price)||0)+Math.max(0,n-minS(s))*(Number(s.extra)||0);}
+function opts(s){return s&&Array.isArray(s.options)&&s.options.length?s.options:[{min:SLOT,price:0}];}
+function slotsFor(min){return Math.max(1,Math.ceil((Number(min)||SLOT)/SLOT));}
+function optLabel(o){return durLabel(o.min)+' '+(Number(o.price)?won(o.price):'상담 후 안내');}
 
 function normalize(x){
   x=(x&&typeof x==='object')?x:{};
   if(!Array.isArray(x.services))x.services=[];
+  x.services.forEach(function(s){if(!Array.isArray(s.options)||!s.options.length)s.options=[{min:SLOT,price:0}];});
   if(!Array.isArray(x.blocks))x.blocks=[];
   if(!Array.isArray(x.closed))x.closed=[];
   if(!Array.isArray(x.hours)||x.hours.length!==7){x.hours=[];for(var i=0;i<7;i++)x.hours.push({on:false,start:'19:00',end:'23:00'});}
@@ -383,42 +396,32 @@ function isFree(list,d,t,len){return !list.some(function(b){var bs=toMin(b.t);re
 function slotList(d){var h=dayHours(S,d);if(!h)return null;var e0=earliest(S,d),out=[];for(var t=Math.ceil(h[0]/SLOT)*SLOT;t+SLOT<=h[1];t+=SLOT)out.push({t:t,ok:t>=e0&&isFree(BUSY,d,t,SLOT)});return out;}
 function slotOk(l,t){for(var i=0;i<l.length;i++)if(l[i].t===t)return l[i].ok;return false;}
 function runOk(l,t,k){for(var i=0;i<k;i++)if(!slotOk(l,t+i*SLOT))return false;return true;}
-function runStartFor(l,t,k){if(runOk(l,t,k))return t;for(var s=t-SLOT;s>t-k*SLOT;s-=SLOT)if(runOk(l,s,k))return s;return null;}
-function dayStatus(s,d){var l=slotList(d);if(!l)return 'off';var k=minS(s);return l.some(function(x){return runOk(l,x.t,k);})?'open':'full';}
+function needSlots(s){var o=curOpt(s);if(o)return slotsFor(o.min);return Math.min.apply(null,opts(s).map(function(x){return slotsFor(x.min);}));}
+function dayStatus(s,d){var l=slotList(d);if(!l)return 'off';var k=needSlots(s);return l.some(function(x){return runOk(l,x.t,k);})?'open':'full';}
 function depositOf(st,total){if(!total)return 0;var dp=st.deposit||{};if(dp.mode==='fixed')return Math.min(Number(dp.amount)||0,total);if(dp.mode==='percent'){var v=Math.ceil(total*(Number(dp.percent)||0)/100/1000)*1000;return Math.min(v,total);}return total;}
 
 /* customer */
 function blankForm(){return {name:'',phone:'',kakao:'',memo:'',consent:false,p:[{birth:'',cal:'양력',time:'',sex:''},{name:'',birth:'',cal:'양력',time:'',sex:''}]};}
-var C={cat:null,sid:null,d:null,sel:[],selMsg:'',f:blankForm()};
+var C={cat:null,sid:null,o:null,d:null,t:null,selMsg:'',f:blankForm()};
 var DONE=null,LAST=null,sending=false,bookMsg='';
 var Q={mode:'code',code:'',tail:'',name:'',phone:'',busy:false,res:null,err:''};
 function active(){return S.services.filter(function(x){return x.on;});}
 function cats(){var out=[];active().forEach(function(x){if(out.indexOf(x.cat)<0)out.push(x.cat);});return out;}
 function svc(){var id=C.sid;return active().filter(function(x){return x.id===id;})[0]||null;}
-function resetTime(){C.sel=[];C.selMsg='';}
-function pickCat(c){C.cat=c;var l=active().filter(function(x){return x.cat===c;});C.sid=l.length===1?l[0].id:null;C.d=null;resetTime();}
-function autoCat(){var cs=cats();if(!C.cat&&cs.length===1)pickCat(cs[0]);if(C.cat&&cs.indexOf(C.cat)<0){C.cat=null;C.sid=null;C.d=null;resetTime();}}
-function selReady(s){return !!(s&&C.d&&C.sel.length>=minS(s)&&C.sel.length<=maxS(s));}
-function selRange(){return hhmm(C.sel[0])+' – '+hhmm(C.sel[C.sel.length-1]+SLOT);}
+function resetTime(){C.t=null;C.selMsg='';}
+function curOpt(s){var o=opts(s);if(C.o!=null&&o[C.o])return o[C.o];return o.length===1?o[0]:null;}
+function pickSvc(id){C.sid=id;var s=svc();C.o=s&&opts(s).length===1?0:null;resetTime();if(C.d&&s&&dayStatus(s,C.d)!=='open')C.d=null;}
+function pickCat(c){C.cat=c;var l=active().filter(function(x){return x.cat===c;});C.d=null;if(l.length===1)pickSvc(l[0].id);else{C.sid=null;C.o=null;resetTime();}}
+function autoCat(){var cs=cats();if(!C.cat&&cs.length===1)pickCat(cs[0]);if(C.cat&&cs.indexOf(C.cat)<0){C.cat=null;C.sid=null;C.o=null;C.d=null;resetTime();}}
+function selReady(s){return !!(s&&curOpt(s)&&C.d&&C.t!=null);}
+function selRange(s){return hhmm(C.t)+' – '+hhmm(C.t+Number(curOpt(s).min));}
 
 function tapSlot(t){
-  var s=svc();if(!s||!C.d)return;
-  var l=slotList(C.d)||[],k=minS(s),mx=maxS(s),sel=C.sel;C.selMsg='';
-  if(!slotOk(l,t))return;
-  var first=sel.length?sel[0]:null,last=sel.length?sel[sel.length-1]:null;
-  if(sel.indexOf(t)>=0){
-    if(sel.length<=k){C.sel=[];return;}
-    if(t===last){C.sel=sel.slice(0,-1);return;}
-    if(t===first){C.sel=sel.slice(1);return;}
-    C.sel=sel.filter(function(x){return x<=t;});if(C.sel.length<k)C.sel=[];return;
-  }
-  if(sel.length&&(t===last+SLOT||t===first-SLOT)){
-    if(sel.length>=mx){C.selMsg='이 상담은 최대 '+durLabel(mx*SLOT)+'까지 예약할 수 있어요.';return;}
-    C.sel=t>last?sel.concat([t]):[t].concat(sel);return;
-  }
-  var st=runStartFor(l,t,k);
-  if(st==null){C.selMsg='이 상담은 최소 '+durLabel(k*SLOT)+'이 필요한데, 여기서는 그만큼 이어서 비어 있지 않아요.';return;}
-  C.sel=[];for(var i=0;i<k;i++)C.sel.push(st+i*SLOT);
+  var s=svc(),o=s&&curOpt(s);if(!o||!C.d)return;
+  var l=slotList(C.d)||[],k=slotsFor(o.min);C.selMsg='';
+  if(C.t!=null&&t>=C.t&&t<C.t+k*SLOT){C.t=null;return;}
+  if(runOk(l,t,k)){C.t=t;return;}
+  C.selMsg=durLabel(o.min)+' 상담은 30분 칸 '+k+'개가 필요한데, 여기서는 이어서 비어 있지 않아요.';
 }
 
 var view=location.hash==='#reserve'?'book':location.hash==='#check'?'check':'gate';
@@ -431,12 +434,14 @@ function loadPublic(){
   return fetch(API_URL+'?action=public').then(function(r){return r.json();}).then(function(res){
     loading=false;
     if(!res||!res.ok){loadErr='server';}
-    else if(!res.config||res.config.slot!==SLOT){loadErr='old';}
+    else if(!res.config||res.config.slot!==SLOT||!(res.config.ver>=3)){loadErr='old';}
     else{
       S=normalize(res.config);BUSY=Array.isArray(res.busy)?res.busy:[];loaded=true;loadErr='';autoCat();
       var s=svc();
+      if(s&&C.o!=null&&!opts(s)[C.o])C.o=opts(s).length===1?0:null;
       if(C.d&&s&&dayStatus(s,C.d)!=='open'){C.d=null;resetTime();}
-      if(C.sel.length&&C.d){var l=slotList(C.d)||[];if(!C.sel.every(function(t){return slotOk(l,t);})){resetTime();C.selMsg='고른 시간 중 일부가 방금 마감됐어요. 다시 골라주세요.';}}
+      var o=s&&curOpt(s);
+      if(C.t!=null&&C.d&&o&&!runOk(slotList(C.d)||[],C.t,slotsFor(o.min))){resetTime();C.selMsg='고른 시간이 방금 마감됐어요. 다른 시간을 골라주세요.';}
     }
     if(!entering&&view!=='admin')render();
   }).catch(function(){loading=false;loadErr='network';if(!entering&&view!=='admin')render();});
@@ -446,11 +451,7 @@ function field(id,label,ctrl){return '<div class="field"><label class="flabel" f
 function selHTML(attrs,opts,cur){return '<select '+attrs+'>'+opts.map(function(o){return '<option value="'+esc(o.v)+'"'+(String(o.v)===String(cur)?' selected':'')+'>'+esc(o.l)+'</option>';}).join('')+'</select>';}
 function hint(t){return '<p class="hint">'+t+'</p>';}
 function step(n,title,on,body){return '<section class="step'+(on?'':' locked')+'" aria-labelledby="st'+n+'"><div class="step-head"><span class="num" aria-hidden="true">'+n+'</span><h2 id="st'+n+'">'+title+'</h2></div>'+body+'</section>';}
-function priceLine(x){
-  var a=minS(x),b=maxS(x),p=Number(x.price)||0,e=Number(x.extra)||0;
-  if(!p&&!e)return durLabel(a*SLOT)+(b>a?' ~ '+durLabel(b*SLOT):'')+' · 요금은 상담 후 안내';
-  return durLabel(a*SLOT)+' '+won(p)+(b>a?' · 30분 추가마다 '+(e?won(e):'추가 요금 없음')+' · 최대 '+durLabel(b*SLOT):'');
-}
+function priceLine(x){return opts(x).map(optLabel).join(' · ');}
 function srow(k,v){return '<div class="srow"><dt>'+k+'</dt><dd>'+v+'</dd></div>';}
 
 /* 대문 */
@@ -482,10 +483,17 @@ function step1(cs){
   if(cs.length>1)h+='<div class="seg" role="group" aria-label="상담 분류">'+cs.map(function(c){return '<button type="button" class="seg-b" data-act="cat" data-v="'+esc(c)+'" aria-pressed="'+(C.cat===c)+'">'+esc(c)+'</button>';}).join('')+'</div>';
   if(!C.cat)return h+hint(cs.map(esc).join(', ')+' 중에서 골라주세요.');
   var list=active().filter(function(x){return x.cat===C.cat;});
-  return h+'<div class="svcs">'+list.map(function(x){return '<button type="button" class="svc" data-act="svc" data-v="'+esc(x.id)+'" aria-pressed="'+(C.sid===x.id)+'"><span class="svc-top"><span class="svc-name">'+esc(x.name)+'</span><span class="svc-price">'+priceLine(x)+'</span></span>'+(x.desc?'<span class="svc-desc">'+esc(x.desc)+'</span>':'')+'</button>';}).join('')+'</div>';
+  h+='<div class="svcs">'+list.map(function(x){return '<button type="button" class="svc" data-act="svc" data-v="'+esc(x.id)+'" aria-pressed="'+(C.sid===x.id)+'"><span class="svc-top"><span class="svc-name">'+esc(x.name)+'</span><span class="svc-price">'+priceLine(x)+'</span></span>'+(x.desc?'<span class="svc-desc">'+esc(x.desc)+'</span>':'')+'</button>';}).join('')+'</div>';
+  var s=svc();
+  if(s){
+    var o=opts(s),cur=curOpt(s);
+    h+='<p class="sub-label" id="dur-l">상담 시간</p><div class="durs" role="group" aria-labelledby="dur-l">'+o.map(function(x,i){return '<button type="button" class="dur" data-act="opt" data-v="'+i+'" aria-pressed="'+(cur===x)+'"><b>'+durLabel(x.min)+'</b><span>'+(Number(x.price)?won(x.price):'상담 후 안내')+'</span></button>';}).join('')+'</div>';
+    if(!cur)h+='<p class="fine">원하는 상담 시간을 골라주세요.</p>';
+  }
+  return h;
 }
 function step2(s){
-  var n=now(),N=Math.min(60,Math.max(1,Number(S.daysAhead)||14)),days=[],k=minS(s),mx=maxS(s);
+  var n=now(),N=Math.min(60,Math.max(1,Number(S.daysAhead)||14)),days=[],o=curOpt(s),k=slotsFor(o.min);
   for(var i=0;i<N;i++){var d=addDays(n.d,i);days.push({d:d,i:i,st:dayStatus(s,d)});}
   var h='<div class="dates" id="dates" role="group" aria-label="날짜">'+days.map(function(x){
     var ok=x.st==='open',w=wd(x.d),sub=x.st==='off'?'휴무':(ok?'':'마감');
@@ -496,16 +504,16 @@ function step2(s){
     return h+hint('날짜를 골라주세요.');
   }
   var l=slotList(C.d)||[];
-  if(bookMsg&&!C.sel.length)h+='<p class="err" role="alert">'+esc(bookMsg)+'</p>';
-  h+='<p class="sub-label">'+longDate(C.d)+' · 30분 단위</p><div class="times" role="group" aria-label="상담 시간 칸">'+l.map(function(x){
-    var usable=x.ok&&(C.sel.indexOf(x.t)>=0||runStartFor(l,x.t,k)!=null||(C.sel.length&&(x.t===C.sel[C.sel.length-1]+SLOT||x.t===C.sel[0]-SLOT)));
-    return '<button type="button" class="time" data-act="slot" data-v="'+x.t+'" aria-pressed="'+(C.sel.indexOf(x.t)>=0)+'"'+(usable?'':' disabled')+'>'+hhmm(x.t)+'</button>';
+  if(bookMsg&&C.t==null)h+='<p class="err" role="alert">'+esc(bookMsg)+'</p>';
+  h+='<p class="sub-label">'+longDate(C.d)+' · 시작 시간</p><div class="times" role="group" aria-label="시작 시간">'+l.map(function(x){
+    var inSel=C.t!=null&&x.t>=C.t&&x.t<C.t+k*SLOT,usable=x.ok&&(inSel||runOk(l,x.t,k));
+    return '<button type="button" class="time'+(inSel&&x.t!==C.t?' cont':'')+'" data-act="slot" data-v="'+x.t+'" aria-pressed="'+inSel+'"'+(usable?'':' disabled')+'>'+hhmm(x.t)+'</button>';
   }).join('')+'</div>';
   if(C.selMsg)h+='<p class="err" role="alert">'+esc(C.selMsg)+'</p>';
-  if(C.sel.length){var p=priceOf(s,C.sel.length);h+='<p class="sel-sum"><strong>'+selRange()+' · '+durLabel(C.sel.length*SLOT)+'</strong><span>'+(p?won(p):'상담 후 안내')+'</span></p>';}
-  var tip=k>1?'이 상담은 최소 '+durLabel(k*SLOT)+'이라, 시간을 누르면 '+k+'칸이 함께 골라져요. ':'상담을 시작할 시간을 눌러주세요. ';
-  if(mx>k)tip+='이어지는 칸을 더 누르면 30분씩 길어져요(최대 '+durLabel(mx*SLOT)+').';
-  h+='<p class="fine">'+tip+' 흐린 칸은 이미 예약됐거나 예약할 수 없는 시간이에요.</p>';
+  if(C.t!=null)h+='<p class="sel-sum"><strong>'+selRange(s)+' · '+durLabel(o.min)+'</strong><span>'+(Number(o.price)?won(o.price):'상담 후 안내')+'</span></p>';
+  var tip='상담을 시작할 시간을 한 번만 눌러주세요.';
+  if(k>1)tip+=' '+durLabel(o.min)+' 상담이라 30분 칸 '+k+'개가 함께 잡혀요.';
+  h+='<p class="fine">'+tip+' 흐린 칸은 이미 예약됐거나 이 상담 시간을 넣을 수 없는 시간이에요.</p>';
   return h;
 }
 function step3(s){
@@ -535,8 +543,8 @@ function missing(s){
 function summaryHTML(){
   var s=svc();
   if(!selReady(s))return (bookMsg?'<p class="err" role="alert">'+esc(bookMsg)+'</p>':'')+hint('상담, 날짜, 시간을 고르면 예약 내용이 여기에 나와요.');
-  var n=C.sel.length,total=priceOf(s,n),dep=depositOf(S,total),miss=missing(s);
-  var h='<div class="sum"><dl>'+srow('상담',esc(s.name))+srow('일시',longDate(C.d)+'<br>'+selRange())+srow('상담 시간',durLabel(n*SLOT))+srow('상담 방식',esc(S.method))+srow('요금',total?won(total):'상담 후 안내')+(total&&dep<total?srow('잔금',won(total-dep)):'')+'</dl>';
+  var o=curOpt(s),total=Number(o.price)||0,dep=depositOf(S,total),miss=missing(s);
+  var h='<div class="sum"><dl>'+srow('상담',esc(s.name))+srow('일시',longDate(C.d)+'<br>'+selRange(s))+srow('상담 시간',durLabel(o.min))+srow('상담 방식',esc(S.method))+srow('요금',total?won(total):'상담 후 안내')+(total&&dep<total?srow('잔금',won(total-dep)):'')+'</dl>';
   h+='<div class="dep"><span>예약금</span><strong>'+(total?won(dep):'상담 후 안내')+'</strong></div>';
   if(miss.length)h+='<p class="miss">'+miss.join(', ')+' 칸을 채워주세요.</p>';
   if(bookMsg)h+='<p class="err" role="alert">'+esc(bookMsg)+'</p>';
@@ -566,7 +574,8 @@ function renderBook(){
   var cs=cats(),s=svc();
   h+='<p class="lead">원하는 상담과 시간을 고르고 정보를 적어 예약하기를 눌러주세요. 예약금 입금이 확인되면 예약이 확정돼요.</p>';
   h+=step(1,'상담 고르기',true,step1(cs));
-  h+=step(2,'날짜와 시간',!!s,s?step2(s):hint('상담을 먼저 골라주세요.'));
+  var ready=!!(s&&curOpt(s));
+  h+=step(2,'날짜와 시간',ready,ready?step2(s):hint(s?'상담 시간을 먼저 골라주세요.':'상담을 먼저 골라주세요.'));
   h+=step(3,'예약자 정보',!!s,s?step3(s):hint('상담을 먼저 골라주세요.'));
   h+=step(4,'예약하기',true,'<div id="summary">'+summaryHTML()+'</div>');
   if(S.notice.trim())h+='<section class="notice"><h2>취소·환불 안내</h2><p>'+esc(S.notice.trim())+'</p></section>';
@@ -579,9 +588,9 @@ async function submit(){
   var f=C.f,n=Number(s.people)||0,persons=[];
   for(var i=0;i<n&&i<2;i++)persons.push({name:f.p[i].name||'',birth:f.p[i].birth,cal:f.p[i].cal,time:f.p[i].time,sex:f.p[i].sex});
   try{
-    var res=await post({action:'book',booking:{sid:s.id,d:C.d,t:hhmm(C.sel[0]),n:C.sel.length,name:f.name,phone:f.phone,kakao:f.kakao,persons:persons,memo:f.memo,consent:!!f.consent||!S.consent.trim()}});
+    var res=await post({action:'book',booking:{sid:s.id,d:C.d,t:hhmm(C.t),min:Number(curOpt(s).min),name:f.name,phone:f.phone,kakao:f.kakao,persons:persons,memo:f.memo,consent:!!f.consent||!S.consent.trim()}});
     sending=false;
-    if(res&&res.ok){DONE=res;LAST={code:res.code,tail:f.phone.replace(/\D/g,'').slice(-4)};C={cat:null,sid:null,d:null,sel:[],selMsg:'',f:blankForm()};autoCat();render();window.scrollTo(0,0);loadPublic();return;}
+    if(res&&res.ok){DONE=res;LAST={code:res.code,tail:f.phone.replace(/\D/g,'').slice(-4)};C={cat:null,sid:null,o:null,d:null,t:null,selMsg:'',f:blankForm()};autoCat();render();window.scrollTo(0,0);loadPublic();return;}
     var code=res&&res.error;bookMsg=ERR[code]||ERR.server;
     if(code==='taken'||code==='time'||code==='too_soon'||code==='closed'||code==='length'){resetTime();await loadPublic();return;}
   }catch(e){sending=false;bookMsg='인터넷 연결을 확인하고 다시 눌러주세요.';}
@@ -629,11 +638,27 @@ async function doLookup(){
 function catOpts(){var l=BASE_CATS.slice();A.services.forEach(function(x){if(x.cat&&l.indexOf(x.cat)<0)l.push(x.cat);});return l.map(function(c){return {v:c,l:c};});}
 function inp(key,type,val,id,extra){return '<input id="'+id+'" data-k="'+key+'"'+(type==='num'?' type="number" inputmode="numeric" data-t="num"':' type="text"')+' value="'+esc(val)+'"'+(extra?' '+extra:'')+'>';}
 function ta(key,val,id,rows){return '<textarea id="'+id+'" data-k="'+key+'" rows="'+rows+'">'+esc(val)+'</textarea>';}
-function slotOpts(lo,hi){var o=[];for(var n=lo;n<=hi;n++)o.push({v:n,l:durLabel(n*SLOT)});return o;}
 function previewLine(s){
-  var a=minS(s),b=maxS(s),out=[];
-  for(var n=a;n<=Math.min(b,a+3);n++){var p=priceOf(s,n);out.push(durLabel(n*SLOT)+' '+(p?won(p):'상담 후 안내'));}
-  return '손님에게 보이는 선택지: '+out.join(' · ')+(b>a+3?' … 최대 '+durLabel(b*SLOT):'');
+  var seen={},out=[],bad=0,dup=0;
+  (s.options||[]).forEach(function(o){
+    var m=Math.round(Number(o.min));
+    if(!(m>=5&&m<=480)){bad++;return;}
+    if(seen[m]){dup++;return;}
+    seen[m]=1;out.push({min:m,price:Math.max(0,Math.round(Number(o.price)||0))});
+  });
+  out.sort(function(x,y){return x.min-y.min;});
+  var t=out.length?'손님에게 보이는 선택지: '+out.map(function(o){return optLabel(o)+' (예약 칸 '+durLabel(slotsFor(o.min)*SLOT)+')';}).join(' · '):'손님에게 보일 상담 시간이 없어요.';
+  if(bad)t+=' ※ 상담 시간은 5~480분 사이로 적어주세요. 그 밖의 줄은 저장할 때 빠져요.';
+  if(dup)t+=' ※ 같은 상담 시간이 두 번 있어요. 하나만 남아요.';
+  return t;
+}
+function optRows(s,i){
+  var p='services.'+i+'.options.',n=s.options.length;
+  return '<div class="opts" role="group" aria-label="'+esc(s.name)+' 상담 시간과 요금">'+s.options.map(function(o,j){
+    var id='s'+i+'-o'+j;
+    return '<div class="opt-row">'+field(id+'-min','상담 시간(분)',inp(p+j+'.min','num',o.min,id+'-min','min="5" max="480" step="1"'))+field(id+'-price','요금(원)',inp(p+j+'.price','num',o.price,id+'-price','min="0" step="1000"'))
+      +'<button type="button" class="btn small ghost" data-act="del-opt" data-v="'+i+'.'+j+'"'+(n<=1?' disabled':'')+' aria-label="'+durLabel(o.min)+' 줄 삭제">삭제</button></div>';
+  }).join('')+'</div><div><button type="button" class="btn small" data-act="add-opt" data-v="'+i+'"'+(n>=8?' disabled':'')+'>상담 시간 추가</button></div>';
 }
 function saveText(){if(saving)return '저장하는 중…';if(saveMsg)return saveMsg;return dirty?'저장하지 않은 변경 사항이 있어요.':'모든 내용이 손님 화면에 반영돼 있어요.';}
 function updSave(){var p=document.getElementById('save-state'),b=document.getElementById('save-btn');if(p)p.textContent=saveText();if(b)b.disabled=!(dirty&&!saving);}
@@ -678,14 +703,13 @@ function aSched(){
 }
 function aPrice(){
   var last=A.services.length-1;
-  var h='<section class="apanel"><h2>요금표</h2><p class="fine">예약은 30분 칸 단위예요. 기본 길이의 요금을 정하고, 더 길게 예약할 수 있게 하려면 최대 길이와 30분 추가 요금을 정해주세요. 요금을 0으로 두면 "상담 후 안내"로 보여요.</p><div class="alist">';
+  var h='<section class="apanel"><h2>요금표</h2><p class="fine">상담마다 실제 상담 시간(분)과 요금을 원하는 만큼 적어주세요(최대 8줄). 예약표는 30분 칸이라, 10·20·30분 상담은 1칸, 40·50·60분 상담은 2칸이 잡혀요. 요금을 0으로 두면 "상담 후 안내"로 보여요.</p><div class="alist">';
   h+=A.services.map(function(s,i){
     var p='services.'+i+'.',id='s'+i;
     var del=confirmDel===s.id?'<button type="button" class="btn small danger" data-act="del-svc" data-v="'+i+'">정말 삭제</button><button type="button" class="btn small ghost" data-act="cancel-del">취소</button>':'<button type="button" class="btn small ghost" data-act="ask-del" data-v="'+esc(s.id)+'">삭제</button>';
     return '<article class="acard'+(s.on?'':' off')+'"><div class="acard-head"><label class="check"><input type="checkbox" data-k="'+p+'on" data-t="bool" data-rr="1"'+(s.on?' checked':'')+'> 손님에게 보이기</label><div class="row-btns"><button type="button" class="btn small ghost" data-act="up-svc" data-v="'+i+'"'+(i===0?' disabled':'')+' aria-label="'+esc(s.name)+' 위로">↑</button><button type="button" class="btn small ghost" data-act="down-svc" data-v="'+i+'"'+(i===last?' disabled':'')+' aria-label="'+esc(s.name)+' 아래로">↓</button>'+del+'</div></div>'
     +'<div class="grid2">'+field(id+'-name','상담 이름',inp(p+'name','text',s.name,id+'-name','maxlength="60"'))+field(id+'-cat','분류',selHTML('id="'+id+'-cat" data-k="'+p+'cat"',catOpts(),s.cat))+'</div>'
-    +'<div class="grid2">'+field(id+'-min','기본 길이',selHTML('id="'+id+'-min" data-k="'+p+'minSlots" data-t="num"',slotOpts(1,4),minS(s)))+field(id+'-max','최대 길이',selHTML('id="'+id+'-max" data-k="'+p+'maxSlots" data-t="num"',slotOpts(1,8),maxS(s)))+'</div>'
-    +'<div class="grid2">'+field(id+'-price','기본 길이 요금(원)',inp(p+'price','num',s.price,id+'-price','min="0" step="1000"'))+field(id+'-extra','30분 추가마다(원)',inp(p+'extra','num',s.extra,id+'-extra','min="0" step="1000"'))+'</div>'
+    +optRows(s,i)
     +field(id+'-ppl','생년월일 정보 받기',selHTML('id="'+id+'-ppl" data-k="'+p+'people" data-t="num"',[{v:0,l:'받지 않음 (타로 등)'},{v:1,l:'1명'},{v:2,l:'2명 (궁합 등)'}],s.people))
     +field(id+'-desc','설명 (손님에게 보여요)',ta(p+'desc',s.desc,id+'-desc',2))
     +'<p class="fine preview" id="pv-'+i+'">'+esc(previewLine(s))+'</p></article>';
@@ -865,7 +889,13 @@ function onClick(e){
     case 'pin-del':pin.buf=pin.buf.slice(0,-1);pin.msg='';renderPin();return;
     case 'pin-ok':tryPin();return;
     case 'cat':pickCat(v);bookMsg='';break;
-    case 'svc':C.sid=v;resetTime();bookMsg='';s=svc();if(C.d&&s&&dayStatus(s,C.d)!=='open')C.d=null;break;
+    case 'svc':pickSvc(v);bookMsg='';break;
+    case 'opt':{C.o=Number(v);bookMsg='';s=svc();var oo=s&&curOpt(s);C.selMsg='';
+      if(C.d&&s&&dayStatus(s,C.d)!=='open'){C.d=null;C.t=null;}
+      else if(C.t!=null&&oo&&!runOk(slotList(C.d)||[],C.t,slotsFor(oo.min))){C.t=null;C.selMsg='고른 시작 시간에는 '+durLabel(oo.min)+' 상담이 들어가지 않아 시간을 비웠어요. 다시 골라주세요.';}
+      break;}
+    case 'add-opt':{var sv=A.services[Number(v)],ol=sv.options,lastO=ol[ol.length-1]||{min:0,price:0};if(ol.length>=8)return;ol.push({min:Math.min(480,(Number(lastO.min)||0)+10),price:Number(lastO.price)||0});markDirty();break;}
+    case 'del-opt':{var pr=String(v).split('.'),sv2=A.services[Number(pr[0])];if(sv2.options.length<=1)return;sv2.options.splice(Number(pr[1]),1);markDirty();break;}
     case 'day':C.d=v;resetTime();bookMsg='';break;
     case 'slot':tapSlot(Number(v));bookMsg='';break;
     case 'submit':submit();return;
@@ -885,7 +915,7 @@ function onClick(e){
     case 'del-block':A.blocks.splice(Number(v),1);markDirty();break;
     case 'add-closed':{var cd=val('nc-d');if(!cd){say('nc-msg','날짜를 골라주세요.');return;}if(A.closed.indexOf(cd)>=0){say('nc-msg','이미 휴무일로 지정된 날이에요.');return;}A.closed.push(cd);A.closed.sort();markDirty();break;}
     case 'del-closed':A.closed.splice(Number(v),1);markDirty();break;
-    case 'add-svc':A.services.push({id:'s'+Date.now().toString(36),cat:'사주',name:'새 상담',minSlots:1,maxSlots:1,price:0,extra:0,people:1,desc:'',on:false});markDirty();break;
+    case 'add-svc':A.services.push({id:'s'+Date.now().toString(36),cat:'사주',name:'새 상담',options:[{min:30,price:0}],people:1,desc:'',on:false});markDirty();break;
     case 'ask-del':confirmDel=v;break;
     case 'cancel-del':confirmDel=null;break;
     case 'del-svc':A.services.splice(Number(v),1);confirmDel=null;markDirty();break;
